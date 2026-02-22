@@ -1,0 +1,1 @@
+Aici se afla partea de PYTHON al proiectului "Joc de memorie" realizat de Pal Roland.
