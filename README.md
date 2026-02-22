@@ -1,195 +1,149 @@
-# 🎮 Memory Game on FPGA (VHDL) + UART Python Logger — Nexys4 / Nexys A7 (Artix-7)
+# VHDL Joc de Memorie (FPGA) + Python UART 🎮🔟 (Nexys4 / Nexys A7)
 
-![FPGA](https://img.shields.io/badge/FPGA-Nexys4%20%2F%20Nexys%20A7-blue)
-![VHDL](https://img.shields.io/badge/HDL-VHDL-8A2BE2)
-![UART](https://img.shields.io/badge/Comm-UART-success)
-![Python](https://img.shields.io/badge/Python-3.x-yellow)
-![Vivado](https://img.shields.io/badge/Vivado-2024.2-orange)
-
-A **memory game implemented on FPGA** in **VHDL** for **Nexys4 Artix-7 / Nexys A7**, using:
-- ✅ **Pmod KYPD (4x4 keypad)** for input  
-- ✅ **7-seg display (SSD)** for output (multiplexed)  
-- ✅ **UART TX** to send results to PC  
-- ✅ **Python logger** (timestamp + history + best score)
-
-The FPGA generates a **pseudo-random digit sequence** (length depends on level), displays it **digit by digit**, then the player must re-enter the same sequence on the keypad.
+Joc de memorie implementat pe FPGA (**Nexys4 Artix-7 / Nexys A7**) în **VHDL**, cu input de la **Pmod KYPD (tastatură 4x4)** și afișare pe **7-seg (SSD)**.  
+Placa generează o secvență pseudo-aleatoare de cifre (în funcție de nivel), o afișează una câte una, iar utilizatorul trebuie să reintroducă secvența în aceeași ordine.  
+După fiecare rundă, scorul (nivelul) este trimis prin **UART** către PC, unde un **script Python** citește mesajele, adaugă timestamp și salvează automat scorurile + best score.
 
 ---
 
-## 📌 Table of Contents
-- [🎯 Game Idea](#-game-idea)
-- [✅ Features](#-features)
-- [🧩 Architecture](#-architecture)
-- [🧠 Game FSM](#-game-fsm)
-- [🎲 Sequence Generator (LFSR)](#-sequence-generator-lfsr)
-- [🔢 SSD Display + Timing](#-ssd-display--timing)
-- [⌨️ Keypad (Pmod KYPD)](#️-keypad-pmod-kypd)
-- [✅ Check Logic (WIN/LOSE)](#-check-logic-winlose)
-- [🔌 UART + Python Logger](#-uart--python-logger)
-- [🧰 Hardware](#-hardware)
-- [🧑‍💻 Software / Tools](#-software--tools)
-- [▶️ How to Run](#️-how-to-run)
-- [🧪 Testing Scenarios](#-testing-scenarios)
-- [🗂️ Repo Structure](#️-repo-structure)
-- [🗺️ Roadmap](#️-roadmap)
-- [🚀 Improvements](#-improvements)
+## 🎯 Ideea jocului
+
+1. FPGA **generează** o secvență de cifre (lungimea depinde de nivel).
+2. Secvența se **afișează** pe SSD, cifră cu cifră.
+3. Utilizatorul reintroduce secvența pe **Pmod KYPD** (în aceeași ordine).
+4. Dacă este corect → **WIN** → treci la nivelul următor (dificultatea crește).
+5. Dacă este greșit → **LOSE** → rămâi la același nivel și se regenerează o secvență nouă.
+6. La final de rundă, se trimite prin **UART** către PC nivelul + rezultat; Python ține evidența și best score.
+
+Dificultatea crește prin:
+- **secvență mai lungă** (în funcție de nivel)
+- **timp de afișare mai mic** (afișare mai rapidă la niveluri mai mari)
 
 ---
 
-## 🎯 Game Idea
+## ✅ Funcționalități
 
-1. FPGA **generates** a digit sequence (length depends on the current level).
-2. Sequence is **displayed** on the 7-seg, one digit at a time.
-3. User re-enters the sequence on the **4x4 keypad**, in the same order.
-4. If correct → **WIN** → next level (harder).
-5. If incorrect → **LOSE** → same level, new sequence generated.
-6. After every round, FPGA sends **level + result** over UART to the PC.
-7. Python script logs everything with **timestamp** + **best score**.
-
-Difficulty increases by:
-- longer sequence length (higher level → more digits)
-- faster display (higher level → shorter show time)
+- **Game FSM** (control joc): etape clare (generare → afișare → input → verificare → rezultat)
+- **Generator pseudo-aleator** pe bază de **LFSR (16-bit)**
+- **SSD driver** cu multiplexare stabilă + viteză de afișare dependentă de nivel
+- **KYPD controller** (scanare rând/coloană + debounce / valid)
+- **Edge-detect pe key_valid** în top (o apăsare = un singur eveniment)
+- **Verificare secvență** element-cu-element
+- **UART TX** pentru trimitere nivel + WIN/LOSE către PC
+- **Python logger**: citește serial, afișează mesaje, salvează scoruri + timestamp + best score
 
 ---
 
-## ✅ Features
+## 🧩 Block Design / Arhitectură (module)
 
-- **Game FSM** (stable control flow): generate → show → input → check → result  
-- **Pseudo-random generator** using **16-bit LFSR**
-- **SSD driver**: clean multiplexing (no flicker) + level-based timing
-- **KYPD controller**: row/column scanning + debounce + `key_valid`
-- **Edge-detect** in top module (`key_valid` rising edge = 1 press)
-- **Element-by-element verification** for the entered sequence
-- **UART TX**: sends `LEVEL` + `WIN/LOSE`
-- **Python logger**: reads UART, timestamps, saves scores, tracks best score
-
----
-
-## 🧩 Architecture
-
-> Add your diagram to the repo and the README will show it automatically:
+Dacă ai poza în repo, adaug-o în README:
 
 ![Block Diagram](Diagrama_Block.png)
 
-### 🔗 Top Integration
-- `top_uart.vhd` — main Game FSM + module integration + UART messages
+**Top-level integrare:**
+- `top_uart.vhd` – Game FSM + integrare module + UART messages
 
-### 🧱 Modules
-- `kypd_controller.vhd` — keypad scan + `key_valid` + `key_value`
-- `random_digits_gen.vhd` — digit sequence generator (LFSR-based)
-- `num_digits_select.vhd` — selects sequence length **N** based on level
-- `ssd_divider.vhd` — timing: SSD mux clock + show period based on level
-- `ssd.vhd` — 7-seg display driver (mux + decode digits/symbols)
-- `uart_tx.vhd` — UART transmitter
-- `game_log.py` — Python UART reader + score logger
-
----
-
-## 🧠 Game FSM
-
-Implemented with extra “handshake-friendly” states for stability:
-
-- **IDLE** — wait for start  
-- **PRE_GEN** — 1-cycle buffer (signals settle, e.g. `num_digits`)  
-- **GEN** — generate digits until `done_gen`  
-- **TRIGGER_SSD** — one pulse to start showing sequence  
-- **SHOW** — display sequence until `show_done`  
-- **INPUT** — collect exactly **N** valid presses (edge-detect on `key_valid`)  
-- **CHECK** — compare `seq_user[]` with `seq_gen[]`  
-- **WIN** — show win symbol + send UART; next start → level++  
-- **LOSE** — show lose symbol + send UART; next start → regenerate (same level)
+**Periferice & logică:**
+- `kypd_controller.vhd` – scanare tastatură 4x4 + `key_valid` + `key_value`
+- `random_digits_gen.vhd` – generator secvență (LFSR) pentru N cifre
+- `num_digits_select.vhd` – alege N (numărul de cifre) în funcție de nivel
+- `ssd_divider.vhd` – temporizări (multiplexare SSD + perioadă afișare dependentă de nivel)
+- `ssd.vhd` – afișare efectivă pe 7-seg (mux + decodare cifre/simboluri)
+- `uart_tx.vhd` – transmitere serială către PC
+- `game_log.py` – Python: citește UART, salvează scoruri + best score
 
 ---
 
-## 🎲 Sequence Generator (LFSR)
+## 🧠 FSM-ul jocului (stări)
 
-- **16-bit LFSR**, seed: `x"ACE1"`
-- Taps polynomial:  
-  **x^16 + x^14 + x^13 + x^11 + 1**
+Stări folosite (implementare extinsă pentru stabilitate / handshake):
 
-Each step:
-1. Compute `lfsr_next`
-2. Map bits → digit **0..9**
-3. Store into `seq_gen[i]` until **N digits** are generated
-
----
-
-## 🔢 SSD Display + Timing
-
-The SSD logic handles:
-1) **Digit multiplexing** (stable, no flicker)  
-2) Displaying the sequence **digit by digit**, speed depends on level
-
-Example timing idea:
-- `period = BASE_PERIOD - STEP_PERIOD * level`
-
-Symbols:
-- **WIN**: custom victory symbol (parallel lines / pattern)
-- **LOSE**: `----` across all digits
+- **IDLE** – așteaptă start
+- **PRE_GEN** – 1 ciclu “pauză” pentru stabilizare semnale (ex: num_digits)
+- **GEN** – pornește generatorul până la `done_gen`
+- **TRIGGER_SSD** – impuls de start (handshake) pentru modulul de afișare
+- **SHOW** – afișează secvența (una câte una) până la `show_done`
+- **INPUT** – colectează exact N apăsări valide (edge-detect pe `key_valid`)
+- **CHECK** – compară `seq_user[]` cu `seq_gen[]`
+- **WIN** – afișează simbol WIN, trimite UART; la start → nivel++
+- **LOSE** – afișează simbol LOSE, trimite UART; la start → regenerează (același nivel)
 
 ---
 
-## ⌨️ Keypad (Pmod KYPD)
+## 🎲 Generatorul de secvență (LFSR)
 
-- Column scan (0..3), read rows  
-- Press detected when row active under selected column
-
-Outputs:
-- `key_value` — decoded key/digit  
-- `key_valid` — press detected
-
-### ✅ Edge-detect (avoid duplicates)
-In `top_uart.vhd`:
-- store `key_valid_d` (previous)
-- new press when: `key_valid=1` and `key_valid_d=0`
-
-So holding a key won’t count multiple times.
+- **LFSR pe 16 biți**, seed: `x"ACE1"`
+- Polinom (taps):
+  - **x^16 + x^14 + x^13 + x^11 + 1**
+- La fiecare pas se calculează următoarea stare `lfsr_next`, apoi se extrage o cifră și se mapează în **0..9**, salvând în `seq_gen[i]` până la N cifre.
 
 ---
 
-## ✅ Check Logic (WIN/LOSE)
+## 🔢 SSD (7-seg) + temporizare
 
-After exactly **N** digits entered:
-- compare `seq_user[i]` with `seq_gen[i]` for `i = 0..N-1`
-- all match → **WIN**
-- any mismatch → **LOSE**
+Modulul de afișare face două lucruri:
+1) **multiplexarea** digit-urilor (stabilă, fără flicker)  
+2) afișarea secvenței **cifră cu cifră**, cu viteză dependentă de nivel
 
----
+Perioada de afișare (idee de bază):
+- `period = BASE_PERIOD − STEP_PERIOD * lvl`
 
-## 🔌 UART + Python Logger
-
-After every round, FPGA transmits:
-- **level**
-- optionally: result (**WIN/LOSE**)
-
-Example messages:
-- `L: 5`
-- `R: WIN`
-
-Python reads serial, prints messages, and logs:
-- timestamp
-- level
-- result
-- best score
+Simboluri:
+- **WIN**: simbol “victorie” (linii paralele)
+- **LOSE**: afișează “----” pe toate digit-urile
 
 ---
 
-## 🧰 Hardware
+## ⌨️ KYPD (tastatură 4x4)
 
-- FPGA board: **Nexys4 Artix-7** or **Nexys A7**
-- **Pmod KYPD** (4x4 keypad) connected to a PMOD (e.g. `JA`)
-- UART to PC:
-  - either **Pmod USB-UART**
-  - or the board’s built-in UART (depending on setup)
+- Scanare pe coloane (0..3), citire rânduri.
+- Dacă un rând este activ când o coloană e selectată → tasta e apăsată.
+- Modulul oferă:
+  - `key_value` (cod/cifră)
+  - `key_valid` (apăsare detectată)
+
+Pentru a evita dublări, în `top_uart.vhd` se folosește **edge-detect**:
+- se reține `key_valid_d` (valoarea anterioară)
+- apăsare nouă când: `key_valid = 1` și `key_valid_d = 0`
+
+---
+
+## ✅ Verificare (CHECK) – WIN / LOSE
+
+După ce utilizatorul a introdus exact **N** cifre:
+- se compară `seq_user[i]` cu `seq_gen[i]` pentru `i = 0..N-1`
+- dacă toate sunt egale → **WIN**
+- altfel → **LOSE**
+
+---
+
+## 🔌 UART + Python (scoruri pe PC)
+
+După fiecare rundă (WIN/LOSE), FPGA trimite către PC:
+- **nivel**
+- (opțional) **rezultat**
+
+Python citește serial și salvează intrările automat în fișier (cu timestamp) + calculează best score.
+
+Mesaje tip:
+- `L: <numar>` (ex: `L: 5` => LEVEL 5)
+
+---
+
+## 🧰 Hardware necesar
+
+- FPGA: **Nexys4 Artix-7 / Nexys A7**
+- **Pmod KYPD** (tastatură 4x4) – conectat pe PMOD (ex: JA)
+- **Pmod USB-UART** (sau UART prin interfața plăcii, în funcție de setup)
 
 ---
 
 ## 🧑‍💻 Software / Tools
 
-- **Vivado** (e.g. 2024.2)
+- **Vivado** (ex: 2024.2) – synth/impl + bitstream
 - **Python 3.x**
-- `pyserial`
+- `pyserial` (pentru citire UART)
 
-Install:
+Instalare:
 ```bash
 pip install pyserial
